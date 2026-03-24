@@ -4,31 +4,40 @@ on:
     - cron: '0 0 * * *'
   workflow_dispatch:
 
-# Устанавливаем Node.js 24 принудительно для устранения предупреждений
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # Убираем предупреждение Node.js
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4 # Самая свежая версия
+
+      - name: Install Dependencies
+        run: sudo apt-get install -y iconv
 
       - name: Download and Parse Minjust CSV
         run: |
-          # Используем user-agent браузера и игнорируем ошибки SSL для обхода ошибки 35
-          curl -k -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0" \
-          "https://minjust.gov.ru/uploaded/files/exportfsm.csv" -o minjust.csv
+          # Код 28 лечится увеличением тайм-аута и ретриями
+          # --connect-timeout 60 (ждем минуту подключения)
+          # --retry 5 (пробуем 5 раз если упало)
+          curl -k -L -A "Mozilla/5.0" \
+          --connect-timeout 60 \
+          --max-time 300 \
+          --retry 5 \
+          --retry-delay 10 \
+          "https://minjust.gov.ru/uploaded/files/exportfsm.csv" -o minjust_raw.csv
           
-          # Проверка: если файл пустой, выходим с ошибкой
-          [ -s minjust.csv ] || { echo "File is empty"; exit 1; }
+          # Проверка на пустоту
+          [ -s minjust_raw.csv ] || { echo "Download failed (empty file)"; exit 1; }
 
-          # Извлекаем домены (все)
+          # Конвертируем Windows-1251 в UTF-8 (чтобы русский текст читался)
+          iconv -f WINDOWS-1251 -t UTF-8//IGNORE minjust_raw.csv -o minjust.csv
+
+          # Извлекаем домены
           grep -oE "\b([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}\b" minjust.csv | sort -u > domains.txt
           
-          # Извлекаем ключевые фразы (весь список, очистка от мусора)
-          # Берем вторую колонку, убираем кавычки и спецсимволы
+          # Извлекаем ключевые фразы (вторая колонка)
           cut -d';' -f2 minjust.csv | sed 's/"//g' | tr -d '\r' | grep -v "Наименование" | sort -u > keywords.txt
 
           # Формируем JSON
