@@ -1,0 +1,42 @@
+name: Update Blacklist from Minjust
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Download and Parse Minjust CSV
+        run: |
+          # Скачиваем официальный файл
+          curl -L "https://minjust.gov.ru/uploaded/files/exportfsm.csv" -o minjust.csv
+          
+          # 1. Извлекаем домены (регулярное выражение для поиска URL)
+          grep -oE "\b([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}\b" minjust.csv | sort -u > domains.txt
+          
+          # 2. Извлекаем фразы (очистка от кавычек и лишних символов)
+          # Берем первые 1000 записей, чтобы не перегружать память расширения
+          head -n 1000 minjust.csv | cut -d';' -f2 | sed 's/"//g' | tr -d '\r' | sort -u > keywords.txt
+
+          # 3. Формируем чистый JSON для расширения
+          echo "{" > data.json
+          echo '  "blacklist": [' >> data.json
+          sed 's/.*/    "&",/' domains.txt | sed '$ s/,$//' >> data.json
+          echo '  ],' >> data.json
+          echo '  "keywords": [' >> data.json
+          sed 's/.*/    "&",/' keywords.txt | sed '$ s/,$//' >> data.json
+          echo '  ]' >> data.json
+          echo "}" >> data.json
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "Minjust Bot"
+          git config --global user.email "bot@github.com"
+          git add data.json
+          git commit -m "Auto-update: $(date +'%Y-%m-%d')" || exit 0
+          git push
