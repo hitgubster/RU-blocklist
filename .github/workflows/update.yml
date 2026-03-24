@@ -4,7 +4,7 @@ on:
     - cron: '0 0 * * *'
   workflow_dispatch:
 
-# Глобальные переменные для устранения предупреждений и прав доступа
+# Устанавливаем на самом верхнем уровне
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
@@ -14,12 +14,15 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Дублируем env внутри job для гарантии
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2 # Указываем конкретную минорную версию
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0 # Указываем конкретную минорную версию
         with:
           python-version: '3.12'
 
@@ -33,7 +36,6 @@ jobs:
           import json
           import re
 
-          # Используем список источников, которые стабильно отдают данные
           sources = [
               'https://raw.githubusercontent.com/zapret-info/z-i/master/dump.csv',
               'https://raw.githubusercontent.com/it-gov-ru/russian-blocklist/main/domains.txt'
@@ -42,20 +44,12 @@ jobs:
           domains = set()
           for url in sources:
               try:
-                  print(f'Fetching: {url}')
                   r = requests.get(url, timeout=30)
                   if r.status_code == 200:
-                      # Извлекаем все, что похоже на домен
                       found = re.findall(r'\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b', r.text.lower())
                       domains.update(found)
-              except Exception as e:
-                  print(f'Failed {url}: {e}')
+              except: continue
 
-          # Если совсем ничего не скачалось, создаем заглушку
-          if not domains:
-              domains = {'example.com', 'blocked-test.ru'}
-
-          # Формируем итоговый объект
           data = {
               'blacklist': sorted(list(domains))[:40000],
               'keywords': ['экстремист', 'терроризм', 'запрещено', 'минюст']
@@ -63,8 +57,6 @@ jobs:
           
           with open('data.json', 'w', encoding='utf-8') as f:
               json.dump(data, f, ensure_ascii=False, indent=2)
-          
-          print(f'Success! Processed {len(domains)} unique domains.')
           "
 
       - name: Commit and Push
