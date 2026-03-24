@@ -7,48 +7,65 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # Убираем предупреждение Node.js
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4 # Самая свежая версия
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - name: Install Dependencies
-        run: sudo apt-get install -y iconv
+        run: pip install requests
 
-      - name: Download and Parse Minjust CSV
+      - name: Download and Process Data
         run: |
-          # Код 28 лечится увеличением тайм-аута и ретриями
-          # --connect-timeout 60 (ждем минуту подключения)
-          # --retry 5 (пробуем 5 раз если упало)
-          curl -k -L -A "Mozilla/5.0" \
-          --connect-timeout 60 \
-          --max-time 300 \
-          --retry 5 \
-          --retry-delay 10 \
-          "https://minjust.gov.ru/uploaded/files/exportfsm.csv" -o minjust_raw.csv
+          python -c "
+          import requests
+          import json
+          import re
+
+          url = 'https://minjust.gov.ru/uploaded/files/exportfsm.csv'
+          headers = {'User-Agent': 'Mozilla/5.0'}
           
-          # Проверка на пустоту
-          [ -s minjust_raw.csv ] || { echo "Download failed (empty file)"; exit 1; }
+          try:
+              # Скачиваем с игнорированием ошибок SSL
+              response = requests.get(url, headers=headers, verify=False, timeout=120)
+              response.encoding = 'cp1251' # Кодировка Минюста
+              
+              if response.status_code == 200:
+                  lines = response.text.splitlines()
+                  
+                  # Извлекаем домены
+                  content = response.text
+                  domains = sorted(list(set(re.findall(r'\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b', content))))
+                  
+                  # Извлекаем ключевые фразы (вторая колонка CSV)
+                  keywords = []
+                  for line in lines:
+                      parts = line.split(';')
+                      if len(parts) > 1:
+                          phrase = parts[1].replace('\"', '').strip()
+                          if phrase and phrase != 'Наименование':
+                              keywords.append(phrase)
+                  keywords = sorted(list(set(keywords)))
 
-          # Конвертируем Windows-1251 в UTF-8 (чтобы русский текст читался)
-          iconv -f WINDOWS-1251 -t UTF-8//IGNORE minjust_raw.csv -o minjust.csv
-
-          # Извлекаем домены
-          grep -oE "\b([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}\b" minjust.csv | sort -u > domains.txt
-          
-          # Извлекаем ключевые фразы (вторая колонка)
-          cut -d';' -f2 minjust.csv | sed 's/"//g' | tr -d '\r' | grep -v "Наименование" | sort -u > keywords.txt
-
-          # Формируем JSON
-          echo "{" > data.json
-          echo '  "blacklist": [' >> data.json
-          sed 's/.*/    "&",/' domains.txt | sed '$ s/,$//' >> data.json
-          echo '  ],' >> data.json
-          echo '  "keywords": [' >> data.json
-          sed 's/.*/    "&",/' keywords.txt | sed '$ s/,$//' >> data.json
-          echo '  ]' >> data.json
-          echo "}" >> data.json
+                  # Сохраняем в JSON
+                  data = {
+                      'blacklist': domains,
+                      'keywords': keywords
+                  }
+                  with open('data.json', 'w', encoding='utf-8') as f:
+                      json.dump(data, f, ensure_ascii=False, indent=2)
+                  print('Successfully updated data.json')
+              else:
+                  print(f'Error: Status code {response.status_code}')
+                  exit(1)
+          except Exception as e:
+              print(f'Connection failed: {e}')
+              exit(1)
+          "
 
       - name: Commit and Push
         run: |
