@@ -4,13 +4,14 @@ on:
     - cron: '0 0 * * *'
   workflow_dispatch:
 
-# ЭТОТ БЛОК РЕШАЕТ ОШИБКУ 403
 permissions:
   contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true # Принудительно используем Node 24 для чистого лога
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -30,14 +31,30 @@ jobs:
           import json
 
           try:
-              # Домены из реестра
-              r_domains = requests.get('https://reestr.rublacklist.net/api/v3/domains/json/', timeout=60)
-              domains = r_domains.json() if r_domains.status_code == 200 else []
+              # Используем более надежную конечную точку API
+              r = requests.get('https://reestr.rublacklist.net/api/v3/domains/json/', timeout=60)
+              raw_data = r.json()
               
-              # Ключевые слова из реестра организаторов распространения информации (ОРИ)
-              r_keywords = requests.get('https://reestr.rublacklist.net/api/v3/disseminators/json/', timeout=60)
-              keywords_data = r_keywords.json() if r_keywords.status_code == 200 else []
-              keywords = [k.get('url', '') for k in keywords_data if k.get('url')]
+              # API может возвращать либо список строк, либо список объектов
+              domains = []
+              if isinstance(raw_data, list):
+                  for item in raw_data:
+                      if isinstance(item, str):
+                          domains.append(item)
+                      elif isinstance(item, dict):
+                          domains.append(item.get('domain', ''))
+              
+              # Очистка от пустых строк
+              domains = [d for d in domains if d]
+
+              # Получаем ключевые слова (ОРИ)
+              rk = requests.get('https://reestr.rublacklist.net/api/v3/disseminators/json/', timeout=60)
+              keywords_raw = rk.json()
+              keywords = []
+              if isinstance(keywords_raw, list):
+                  for k in keywords_raw:
+                      val = k.get('url') or k.get('name')
+                      if val: keywords.append(val)
 
               data = {
                   'blacklist': sorted(list(set(domains))),
@@ -46,7 +63,8 @@ jobs:
               
               with open('data.json', 'w', encoding='utf-8') as f:
                   json.dump(data, f, ensure_ascii=False, indent=2)
-              print(f'Success! Processed {len(domains)} domains.')
+              
+              print(f'Success! Processed {len(domains)} domains and {len(keywords)} keywords.')
           except Exception as e:
               print(f'API error: {e}')
               exit(1)
@@ -57,5 +75,4 @@ jobs:
           git config --global user.name "Minjust Bot"
           git config --global user.email "bot@github.com"
           git add data.json
-          # Проверка, есть ли изменения, чтобы не спамить пустыми коммитами
           git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update from API: $(date +'%Y-%m-%d')" && git push)
