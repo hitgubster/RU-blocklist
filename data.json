@@ -1,8 +1,5 @@
 {
-  "blacklist": [
-    "blocked-test.ru",
-    "example.com"
-  ],
+  "blacklist": [],
   "keywords": [
     "экстремист",
     "терроризм",
