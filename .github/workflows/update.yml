@@ -4,7 +4,6 @@ on:
     - cron: '0 0 * * *'
   workflow_dispatch:
 
-# Устанавливаем на самом верхнем уровне
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
@@ -14,15 +13,12 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Дублируем env внутри job для гарантии
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4.2.2 # Указываем конкретную минорную версию
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5.4.0 # Указываем конкретную минорную версию
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
@@ -38,25 +34,43 @@ jobs:
 
           sources = [
               'https://raw.githubusercontent.com/zapret-info/z-i/master/dump.csv',
-              'https://raw.githubusercontent.com/it-gov-ru/russian-blocklist/main/domains.txt'
+              'https://antizapret.prostovpn.org/domains-export.txt'
           ]
           
           domains = set()
           for url in sources:
               try:
+                  print(f'Fetching: {url}')
                   r = requests.get(url, timeout=30)
                   if r.status_code == 200:
-                      found = re.findall(r'\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b', r.text.lower())
-                      domains.update(found)
-              except: continue
+                      # Разбиваем по строкам, запятым и точкам с запятой
+                      raw_lines = re.split(r'[\n;,]', r.text)
+                      for line in raw_lines:
+                          line = line.strip().lower()
+                          # Простая проверка: есть точка, нет пробелов, длина > 3
+                          if '.' in line and ' ' not in line and len(line) > 3:
+                              # Очищаем от лишних символов (кавычки, звездочки)
+                              clean_domain = re.sub(r'[*\"\'()]', '', line)
+                              if '.' in clean_domain:
+                                  domains.add(clean_domain)
+              except Exception as e:
+                  print(f'Error fetching {url}: {e}')
+
+          # Фильтрация мусора (исключаем IP-адреса и слишком длинные строки)
+          final_list = [d for d in domains if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', d)]
+          final_list = sorted(final_list)[:50000]
+
+          print(f'Sample domains: {final_list[:5]}') # ОТЛАДКА: Посмотрим, что внутри
 
           data = {
-              'blacklist': sorted(list(domains))[:40000],
+              'blacklist': final_list,
               'keywords': ['экстремист', 'терроризм', 'запрещено', 'минюст']
           }
           
           with open('data.json', 'w', encoding='utf-8') as f:
               json.dump(data, f, ensure_ascii=False, indent=2)
+          
+          print(f'Total saved: {len(final_list)} domains.')
           "
 
       - name: Commit and Push
