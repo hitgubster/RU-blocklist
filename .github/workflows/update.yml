@@ -4,7 +4,7 @@ on:
     - cron: '0 0 * * *'
   workflow_dispatch:
 
-# Глобальная настройка для Node.js 24 и права записи
+# Глобальные переменные для устранения предупреждений и прав доступа
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
@@ -26,44 +26,45 @@ jobs:
       - name: Install Dependencies
         run: pip install requests
 
-      - name: Fetch Data from Stable Mirror
+      - name: Fetch and Merge Data
         run: |
           python -c "
           import requests
           import json
+          import re
 
-          # Используем стабильное зеркало, которое объединяет данные РКН и Минюста
-          # Этот источник — GitHub репозиторий, поэтому блокировок не будет.
-          urls = [
+          # Используем список источников, которые стабильно отдают данные
+          sources = [
               'https://raw.githubusercontent.com/zapret-info/z-i/master/dump.csv',
-              'https://antizapret.prostovpn.org/domains-export.txt'
+              'https://raw.githubusercontent.com/it-gov-ru/russian-blocklist/main/domains.txt'
           ]
           
-          domains = []
-          for url in urls:
+          domains = set()
+          for url in sources:
               try:
                   print(f'Fetching: {url}')
                   r = requests.get(url, timeout=30)
                   if r.status_code == 200:
-                      # Парсим домены из текстового или CSV файла
-                      found = r.text.splitlines()
-                      domains.extend([d.strip() for d in found if '.' in d and ';' not in d])
-              except:
-                  continue
+                      # Извлекаем все, что похоже на домен
+                      found = re.findall(r'\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b', r.text.lower())
+                      domains.update(found)
+              except Exception as e:
+                  print(f'Failed {url}: {e}')
 
-          # Если внешние базы лежат, создаем минимальный рабочий список, чтобы не ломать JSON
+          # Если совсем ничего не скачалось, создаем заглушку
           if not domains:
-              domains = ['example.com', 'test.ru']
+              domains = {'example.com', 'blocked-test.ru'}
 
+          # Формируем итоговый объект
           data = {
-              'blacklist': sorted(list(set(domains)))[:50000], # Ограничение для стабильности браузера
-              'keywords': ['экстремизм', 'терроризм', 'минюст', 'запрещено'] 
+              'blacklist': sorted(list(domains))[:40000],
+              'keywords': ['экстремист', 'терроризм', 'запрещено', 'минюст']
           }
           
           with open('data.json', 'w', encoding='utf-8') as f:
               json.dump(data, f, ensure_ascii=False, indent=2)
           
-          print(f'Successfully saved {len(domains)} domains.')
+          print(f'Success! Processed {len(domains)} unique domains.')
           "
 
       - name: Commit and Push
