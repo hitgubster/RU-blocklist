@@ -1,1 +1,4 @@
-{"blacklist": ["example.com"], "keywords": ["песня группы а"]}
+{
+  "blacklist": [],
+  "keywords": []
+}
