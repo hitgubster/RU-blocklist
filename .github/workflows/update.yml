@@ -4,6 +4,10 @@ on:
     - cron: '0 0 * * *'
   workflow_dispatch:
 
+# ЭТОТ БЛОК РЕШАЕТ ОШИБКУ 403
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -25,28 +29,24 @@ jobs:
           import requests
           import json
 
-          # Используем API Роскомсвободы, которое уже содержит очищенные данные Минюста
-          # 1. Получаем список доменов
           try:
+              # Домены из реестра
               r_domains = requests.get('https://reestr.rublacklist.net/api/v3/domains/json/', timeout=60)
               domains = r_domains.json() if r_domains.status_code == 200 else []
               
-              # 2. Получаем ключевые слова (из описаний блокировок)
-              # Для начала возьмем список 'социально значимых' или заблокированных фраз
-              # В данном API мы можем вытянуть их из реестра судебных решений
+              # Ключевые слова из реестра организаторов распространения информации (ОРИ)
               r_keywords = requests.get('https://reestr.rublacklist.net/api/v3/disseminators/json/', timeout=60)
               keywords_data = r_keywords.json() if r_keywords.status_code == 200 else []
               keywords = [k.get('url', '') for k in keywords_data if k.get('url')]
 
-              # Сохраняем результат
               data = {
                   'blacklist': sorted(list(set(domains))),
-                  'keywords': sorted(list(set(keywords)))[:2000] # Ограничим для скорости
+                  'keywords': sorted(list(set(keywords)))[:3000]
               }
               
               with open('data.json', 'w', encoding='utf-8') as f:
                   json.dump(data, f, ensure_ascii=False, indent=2)
-              print(f'Success! Loaded {len(domains)} domains.')
+              print(f'Success! Processed {len(domains)} domains.')
           except Exception as e:
               print(f'API error: {e}')
               exit(1)
@@ -57,5 +57,5 @@ jobs:
           git config --global user.name "Minjust Bot"
           git config --global user.email "bot@github.com"
           git add data.json
-          git commit -m "Auto-update from API: $(date +'%Y-%m-%d')" || exit 0
-          git push
+          # Проверка, есть ли изменения, чтобы не спамить пустыми коммитами
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update from API: $(date +'%Y-%m-%d')" && git push)
